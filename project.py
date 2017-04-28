@@ -167,6 +167,9 @@ def evaluate_Q(eval_data, eval_model, price_data, epoch=0):
 
     return eval_reward
 
+
+
+
 #This neural network is the the Q-function, run it like this:
 #model.predict(state.reshape(1,64), batch_size=1)
 
