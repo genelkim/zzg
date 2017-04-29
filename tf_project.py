@@ -21,10 +21,12 @@ import numpy.random as random
 
 # Data format:
 # Open, Close, Low, High, Volume
-data = np.genfromtxt('data/sorted_data.csv.10000', delimiter=",")[1:,2:]
-
+#data = np.genfromtxt('data/sorted_data.csv.10000', delimiter=",")[1:,2:]
 # Data subset
-data = data[:10000]
+#data = data[:10000]
+#NUM_FEATURES = 5
+data = np.genfromtxt('data/XBTEUR_1day.csv', delimiter=",")
+NUM_FEATURES = 7
 
 
 #
@@ -54,7 +56,7 @@ def get_reward(action, t, data):
 
 # Evaluate performance on optimal strategy (no epsilon or random action).
 def max_reward(sess, data):
-  lstate = np.random.normal(0, 0.2, 2*LSTM_HIDDEN_SIZE).astype(np.float32).reshape((1,10))
+  lstate = np.random.normal(0, 0.2, 2*LSTM_HIDDEN_SIZE).astype(np.float32).reshape((1,2*NUM_FEATURES))
   state = data[0]
   reward_sum = 0
 
@@ -62,7 +64,7 @@ def max_reward(sess, data):
   actions = []
   for t in xrange(1, len(data)):
     qvals_eval, new_lstm_state_eval = \
-        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,5)), lstm_state:lstate})
+        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
     action = np.argmax(qvals_eval)
     actions.append(action)
 
@@ -82,7 +84,6 @@ def max_reward(sess, data):
 #
 
 BATCH_SIZE = 1
-NUM_FEATURES = 5
 
 STEPSIZE = 1 
 
@@ -133,12 +134,12 @@ tf.global_variables_initializer().run()
 
 
 # Q-Learning Parameters
-gamma = 0.01  # discount factor
+gamma = 0.95  # discount factor
 alpha = 1     # learning rate
 epsilon = 1   # exploration factor
 
 # Global Parameters
-EPOCHS = 10
+EPOCHS = 1500
 
 BUFFER_SIZE = 200
 
@@ -152,7 +153,7 @@ WINDOW_SIZE = 15
 for k in xrange(EPOCHS):
 
   # Initialize state and data.
-  lstate = np.random.normal(0, 0.2, 2*LSTM_HIDDEN_SIZE).astype(np.float32).reshape((1,10))
+  lstate = np.random.normal(0, 0.2, 2*LSTM_HIDDEN_SIZE).astype(np.float32).reshape((1,2*NUM_FEATURES))
   state = data[0]
 
   # Run through data and update in batches of BUFFER_SIZE.
@@ -161,7 +162,7 @@ for k in xrange(EPOCHS):
       print t
 
     qvals_eval, new_lstm_state_eval = \
-        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,5)), lstm_state:lstate})
+        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
 
     # Choose action.
     if (random.random() < epsilon):
@@ -189,7 +190,7 @@ for k in xrange(EPOCHS):
         # Get max_Q(S',a)
         #sess.run(qvals, feed_dict={inputs=old_state, lstm_state=old_lstate})
         #old_qvals = qvals
-        qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,5)), lstm_state:new_lstate})
+        qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate})
         new_qvals = qvals_eval
         max_qval = np.max(new_qvals)
         # Q-update
@@ -206,7 +207,7 @@ for k in xrange(EPOCHS):
         x = X_train[j]
         y = y_train[j]
         cur_lstate = replay_buffer[j][-1]
-        sess.run(train_step, feed_dict={inputs:x.reshape((1,5)), gold:y.reshape((1,3)), lstm_state:cur_lstate.reshape((1,10))})
+        sess.run(train_step, feed_dict={inputs:x.reshape((1,NUM_FEATURES)), gold:y.reshape((1,3)), lstm_state:cur_lstate.reshape((1,2*NUM_FEATURES))})
 
       # Reset.
       replay_buffer = []
