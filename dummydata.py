@@ -7,7 +7,7 @@ import pandas as pd
 import random
 import matplotlib.pyplot as plt
 random.seed(123)
-data=[6100,6230
+data=[6100,6230]
 mu,sigma=0,100
 for i in range(3000):
     if data[-1]>=6300 or data[-1]<=5900:
