@@ -15,7 +15,10 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 # Load Data
 #
 
-datafile = 'data/XBTEUR_1day.csv'
+datafile = 'data/dummydata.3000'
+# Index of data for price(close)
+PRICE_INDEX = 0
+
 
 # Data format:
 # Open, Close, Low, High, Volume
@@ -23,7 +26,9 @@ datafile = 'data/XBTEUR_1day.csv'
 # Data subset
 #data = data[:10000]
 #NUM_FEATURES = 5
-raw_data = np.genfromtxt('data/XBTEUR_1day.csv', delimiter=",")
+raw_data = np.genfromtxt(datafile, delimiter=",")
+raw_data = raw_data.reshape((len(raw_data), 1))
+
 # Rescale data.
 means = np.mean(raw_data, axis=0)
 variances = np.var(raw_data, axis=0)
@@ -95,9 +100,6 @@ def mse_loss_fn(prediction, gold):
 # Python MSE
 def mse_loss_py(prediction, gold):
   return np.sqrt(np.sum(np.power(prediction.T - gold, 2)))
-
-# Index of data for price(close)
-PRICE_INDEX = 1
 
 # Reward is difference in price(close) difference * \
 #           action (number of shares sold/bought)
@@ -188,6 +190,8 @@ def max_reward(sess, data):
     y = np.zeros((NUM_ACTIONS, 1))
     y[:] = old_qvals[:]
     y[action] = update
+    #print old_qvals
+    #print y
     loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
     total_loss += loss
 
