@@ -15,5 +15,5 @@ for i in range(3000):
     #    data.append(6100)
     #else:data.append(np.random.normal(mu,sigma,1)[0]+data[-1])
     
-np.savetxt("data/dummydata.3000", data, delimiter=",")
+np.savetxt("data/linear_dummy.csv", data, delimiter=",")
 
