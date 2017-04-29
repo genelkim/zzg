@@ -90,9 +90,10 @@ def init_state(indata, test=False):
 
 #Take Action
 def take_action(state, xdata, action, signal, time_step):
-    #this should generate a list of trade signals that at evaluation time are fed to the backtester
-    #the backtester should get a list of trade signals and a list of price data for the assett
-    
+    #this should generate a list of trade signals that at evaluation time are 
+    #fed to the backtester
+    #the backtester should get a list of trade signals and a list of price data 
+    #for the assett
     #make necessary adjustments to state and then return it
     time_step += 1
     
@@ -125,7 +126,11 @@ def get_reward(new_state, time_step, action, xdata, signal, terminal_state, eval
     signal.fillna(value=0, inplace=True)
 
     if eval == False:
-        bt = twp.Backtest(pd.Series(data=[x for x in xdata[time_step-2:time_step]], index=signal[time_step-2:time_step].index.values), signal[time_step-2:time_step], signalType='shares')
+        bt = twp.Backtest(\
+            pd.Series(data=[x for x in xdata[time_step-2:time_step]], \
+            index=signal[time_step-2:time_step].index.values), \
+            signal[time_step-2:time_step], \
+            signalType='shares')
         print (bt.data)
         reward = ((bt.data['price'].iloc[-1] - bt.data['price'].iloc[-2])*bt.data['shares'].iloc[-1])
 
