@@ -15,7 +15,8 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 # Load Data
 #
 
-datafile = 'data/dummydata.3000'
+#datafile = 'data/dummydata.3000'
+datafile = 'data/linear_dummy.csv'
 # Index of data for price(close)
 PRICE_INDEX = 0
 
@@ -54,12 +55,12 @@ NUM_ACTIONS = len(ACTION_LIST)
 ACTION_VAL = { BUY_ACT : 1, SELL_ACT : -1, HOLD_ACT : 0.0 }
 
 # Q-Learning.
-EPOCHS = 1500
+EPOCHS = 20
 BUFFER_SIZE = 200
 # Gene: I set discout factor to 0 since our current action don't actually cause a state transition.
 gamma = 1.0/EPOCHS  # discount factor
 #gamma = 0
-alpha = 0.1     # learning rate
+alpha = 1     # learning rate
 epsilon = 1   # exploration factor
 WINDOW_SIZE = 15
 
@@ -169,8 +170,8 @@ def max_reward(sess, data):
   #rewards.append(reward)
   lstate = new_lstm_state_eval
   state = data[1]
-  state[-2] = old_state[-2] + ACTION_VAL[action]
-  state[-1] = old_state[-1] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+  state[-2] = old_state[-2] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+  state[-1] = old_state[-1] + ACTION_VAL[action]
   agent_state = AgentState(new_state[-2], new_state[-1])
   
   
@@ -204,8 +205,8 @@ def max_reward(sess, data):
     
     lstate = new_lstm_state_eval
     state = data[t]
-    state[-2] = old_state[-2] + ACTION_VAL[action]
-    state[-1] = old_state[-1] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+    state[-2] = old_state[-2] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+    state[-1] = old_state[-1] + ACTION_VAL[action]
     agent_state = AgentState(new_state[-2], new_state[-1])
     
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
@@ -247,7 +248,8 @@ qvals = tf.matmul(FW, tf.transpose(outputs))
 
 # Training.
 loss = mse_loss_fn(qvals, gold)
-train_step = tf.train.AdamOptimizer(STEPSIZE).minimize(loss)
+#train_step = tf.train.AdamOptimizer(STEPSIZE).minimize(loss)
+train_step = tf.train.GradientDescentOptimizer(STEPSIZE).minimize(loss)
 
 # Start interactive session.
 sess = tf.InteractiveSession()
@@ -293,8 +295,8 @@ for k in xrange(EPOCHS):
     
     # Take action, increment state.
     new_state = data[t]
-    new_state[-2] = state[-2] + ACTION_VAL[action]
-    new_state[-1] = state[-1] + ACTION_VAL[action]*state[PRICE_INDEX]
+    new_state[-2] = state[-2] + ACTION_VAL[action]*state[PRICE_INDEX]
+    new_state[-1] = state[-1] + ACTION_VAL[action]
     agent_state = AgentState(new_state[-2], new_state[-1])
 
     # Observe reward. 
