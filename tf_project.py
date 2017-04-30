@@ -22,7 +22,7 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_dummy_extra_features.csv'
+datafile = 'data/linear_dummy_noise_10_20_extra_features.csv'
 # Index of data for price(close)
 PRICE_INDEX = 1
 
@@ -95,8 +95,8 @@ BATCH_SIZE = 1
 STEPSIZE = 0.01 
 
 
-LSTM_INIT = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE).astype(np.float64).reshape((1,FULL_LSTM_STATE_SIZE))
-LSTM_INIT_HIDDEN = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE_HIDDEN).astype(np.float64).reshape((1,FULL_LSTM_STATE_SIZE_HIDDEN))
+LSTM_INIT = np.random.normal(0, INIT_VAR, FULL_LSTM_STATE_SIZE).astype(np.float64).reshape((1,FULL_LSTM_STATE_SIZE))
+LSTM_INIT_HIDDEN = np.random.normal(0, INIT_VAR, FULL_LSTM_STATE_SIZE_HIDDEN).astype(np.float64).reshape((1,FULL_LSTM_STATE_SIZE_HIDDEN))
 
 
 print "Parameters"
@@ -311,15 +311,15 @@ lstm_state = tf.placeholder(tf.float64, shape=(BATCH_SIZE,FULL_LSTM_STATE_SIZE),
 lstm_state_hidden = tf.placeholder(tf.float64, shape=(BATCH_SIZE, FULL_LSTM_STATE_SIZE_HIDDEN), name="tf_lstm_state_hidden")
 
 #Fully Connected layer weights and biases.
-FW = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, LSTM_STATE_SIZE], stddev=0.2, mean=0, dtype=tf.float64), \
+FW = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, LSTM_STATE_SIZE], stddev=INIT_VAR, mean=0, dtype=tf.float64), \
                  name="FW", dtype=tf.float64)
-FB = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, 1], stddev=0.2, mean=0, dtype=tf.float64),\
+FB = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, 1], stddev=INIT_VAR, mean=0, dtype=tf.float64),\
                  name="FB", dtype=tf.float64)
 
 #Hidden fully Connected layer weights and biases.
-FW_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE_HIDDEN], stddev=0.2, mean=0, dtype=tf.float64), \
+FW_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE_HIDDEN], stddev=INIT_VAR, mean=0, dtype=tf.float64), \
                  name="FW_hidden", dtype=tf.float64)
-FB_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=0.2, mean=0, dtype=tf.float64),\
+FB_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=INIT_VAR, mean=0, dtype=tf.float64),\
                  name="FB_hidden", dtype=tf.float64)
 
 
