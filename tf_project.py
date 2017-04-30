@@ -24,7 +24,7 @@ WINDOW_SIZE = 5
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_updown_dummy_noise_10_20_extra_features.csv'
+datafile = 'data/linear_dummy_extra_features.csv'
 # Index of data for price(close)
 PRICE_INDEX = 1
 
@@ -55,8 +55,8 @@ end_epoch_column[len(raw_data) - 1][0] = 1
 data = np.append(data, end_epoch_column, axis=1)
 
 # Placeholder for qstate values + action.
-#action_zeros = np.zeros((raw_data.shape[0], 1)) 
-#data = np.append(data, action_zeros, axis=1)
+action_zeros = np.zeros((raw_data.shape[0], 1)) 
+data = np.append(data, action_zeros, axis=1)
 qstate_zeros = np.zeros((raw_data.shape[0], len(INITIAL_AGENT_STATE))) 
 data = np.append(data, qstate_zeros, axis=1)
 data = np.nan_to_num(data)
@@ -101,6 +101,8 @@ NUM_FEATURES_EXPAND = 2*NUM_FEATURES
 LSTM_STATE_SIZE_HIDDEN = NUM_FEATURES_EXPAND
 FULL_LSTM_STATE_SIZE_HIDDEN = 2*LSTM_STATE_SIZE_HIDDEN
 
+#QVAL_NUM = NUM_ACTIONS
+QVAL_NUM = 1
 
 BATCH_SIZE = 1
 STEPSIZE = 0.01 
@@ -137,7 +139,8 @@ def mse_loss_fn(prediction, gold):
 def mse_loss_py(prediction, gold):
   #print prediction.T - gold
   #print np.power(prediction.T - gold, 2)
-  return np.mean(np.power(prediction.T - gold, 2))
+  #return np.mean(np.power(prediction.T - gold, 2))
+  return np.mean(np.power(prediction - gold, 2))
 
 # Reward is difference in price(close) difference * \
 #           action (number of shares sold/bought)
@@ -276,7 +279,7 @@ def monte_carlo_reward(sess, data):
     max_qval = np.max(qvals_eval)
     #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
     update = alpha * (reward + (gamma * max_qval))
-    y = np.zeros((NUM_ACTIONS, 1))
+    y = np.zeros((QVAL_NUM, 1))
     y[:] = old_qvals[:]
     y[action] = update
     loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
@@ -318,13 +321,25 @@ def max_reward(sess, data):
   actions = []
 
   # Initial step.
+  """
   qvals_eval, new_lstm_state_eval,new_lstm_state_eval_hidden = \
       sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
       feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
+  """
+  qvals_eval = []
+  for a in ACTION_LIST:
+    state[-3] = a
+    qval_eval, new_lstm_state_eval,new_lstm_state_eval_hidden = \
+        sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
+        feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
+    qvals_eval.append(qval_eval[0])
+
   action = np.argmax(qvals_eval)
   actions.append(action)
+  state[-3] = action
   # Store oldvals,
-  old_qvals = qvals_eval
+  #old_qvals = qvals_eval
+  old_qvals = qvals_eval[action]
   # Take action and get reward.
   new_state, agent_state = take_action(state, agent_state, action, data, 1)
   reward, past_reward = get_reward(action, 1, data, agent_state, past_reward)
@@ -333,16 +348,27 @@ def max_reward(sess, data):
   # Compute prediction and gold in tandem.
   for t in xrange(2, len(data)):
     # Gold computation.
+    """
     qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
         sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden: lstate_hidden})
+    """
+    qvals_eval = []
+    for a in ACTION_LIST:
+      state[-3] = a
+      qval_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
+          sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden: lstate_hidden})
+      qvals_eval.append(qval_eval[0])
 
     # Compute loss.
     max_qval = np.max(qvals_eval)
     #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
     update = alpha * (reward + (gamma * max_qval))
-    y = np.zeros((NUM_ACTIONS, 1))
+    """
+    y = np.zeros((QVAL_NUM, 1))
     y[:] = old_qvals[:]
     y[action] = update
+    """
+    y = update
     loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
     if math.isnan(loss):
       print "loss is nan", loss
@@ -378,7 +404,7 @@ def max_reward(sess, data):
 #   lstm hidden state from previous step
 #   gold value for training
 inputs = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_FEATURES), name="tf_inputs")
-gold = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_ACTIONS), name="tf_gold")
+gold = tf.placeholder(tf.float64, shape=(BATCH_SIZE,QVAL_NUM), name="tf_gold")
 
 #Hidden version of input, also the output from last layer
 inputs_hidden = tf.placeholder(tf.float64,shape=(BATCH_SIZE,NUM_FEATURES_EXPAND), name="tf_inputs_hidden");
@@ -396,9 +422,9 @@ FB = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, 1], stddev=INIT_VAR, 
                  name="FB", dtype=tf.float64)
 
 #Hidden fully Connected layer weights and biases.
-FW_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE_HIDDEN], stddev=INIT_VAR, mean=0, dtype=tf.float64), \
+FW_hidden = tf.Variable(tf.truncated_normal([QVAL_NUM, LSTM_STATE_SIZE_HIDDEN], stddev=INIT_VAR, mean=0, dtype=tf.float64), \
                  name="FW_hidden", dtype=tf.float64)
-FB_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=INIT_VAR, mean=0, dtype=tf.float64),\
+FB_hidden = tf.Variable(tf.truncated_normal([QVAL_NUM, 1], stddev=INIT_VAR, mean=0, dtype=tf.float64),\
                  name="FB_hidden", dtype=tf.float64)
 
 
@@ -429,7 +455,7 @@ with tf.variable_scope('hidden_layer'):
 #Output from hidden fully connected layer
 qvals = tf.matmul(FW_hidden, tf.transpose(outputs_hidden))
 
-#qvals = layers.fully_connected(outputs, num_outputs=NUM_ACTIONS, activation_fn=None)
+#qvals = layers.fully_connected(outputs, num_outputs=QVAL_NUM, activation_fn=None)
 
 # Training.
 loss = mse_loss_fn(qvals, gold)
@@ -462,13 +488,26 @@ for k in xrange(EPOCHS):
   for t in xrange(1, len(data)):
     if t % 1000 == 0:
       print t
+    
+    
+    """
     qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
         sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
         feed_dict={\
           inputs:state.reshape((1,NUM_FEATURES)), \
           lstm_state:lstate, \
           lstm_state_hidden:lstate_hidden})
-
+    """
+    qvals_eval = []
+    for a in ACTION_LIST:
+      state[-3] = a
+      qval_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
+          sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
+          feed_dict={\
+            inputs:state.reshape((1,NUM_FEATURES)), \
+            lstm_state:lstate, \
+            lstm_state_hidden:lstate_hidden})
+      qvals_eval.append(qval_eval[0])
 
     """
     print qvals_eval
@@ -487,7 +526,8 @@ for k in xrange(EPOCHS):
       action = random.choice(ACTION_LIST)
     else: 
       action = np.argmax(qvals_eval)
-    
+    state[-3] = action
+
     # Take action, increment state, observe reward
     new_state, agent_state = take_action(state, agent_state, action, data, t)
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
@@ -509,15 +549,24 @@ for k in xrange(EPOCHS):
         # Get max_Q(S',a)
         #sess.run(qvals, feed_dict={inputs=old_state, lstm_state=old_lstate})
         #old_qvals = qvals
-        qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate, lstm_state_hidden:new_lstate_hidden})
+        #qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate, lstm_state_hidden:new_lstate_hidden})
+        
+        qvals_eval = []
+        for a in ACTION_LIST:
+          new_state[-3] = a 
+          qval_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate, lstm_state_hidden:new_lstate_hidden})
+          qvals_eval.append(qval_eval[0])
 
         max_qval = np.max(qvals_eval)
         # Q-update
         #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
         update = alpha * (reward + (gamma * max_qval))
-        y = np.zeros((NUM_ACTIONS, 1))
+        """
+        y = np.zeros((QVAL_NUM, 1))
         y[:] = old_qvals[:]
         y[action] = update
+        """
+        y = update
 
         """
         print "action", action
@@ -538,7 +587,8 @@ for k in xrange(EPOCHS):
         cur_lstate_hidden = replay_buffer[j][-1]
         sess.run(train_step, \
             feed_dict={inputs:x.reshape((1,NUM_FEATURES)), \
-                       gold:y.reshape((1,3)), \
+                       #gold:y.reshape((1,3)), \
+                       gold:[[y]], \
                        lstm_state:cur_lstate.reshape((1,FULL_LSTM_STATE_SIZE)),\
                        lstm_state_hidden:current_lstm_state_hidden.reshape(1,FULL_LSTM_STATE_SIZE_HIDDEN)})
 
@@ -563,8 +613,8 @@ for k in xrange(EPOCHS):
   
   reward_sum, loss_sum = max_reward(sess, data) 
   print "Epoch #: {}\tReward {}\tLoss {}".format(k, reward_sum, loss_sum) 
-  reward_sum, loss_sum = monte_carlo_reward(sess, data) 
-  print "Logistic Proportional Reward #: {}\tReward {}\tLoss {}".format(k, reward_sum, loss_sum) 
+  #reward_sum, loss_sum = monte_carlo_reward(sess, data) 
+  #print "Logistic Proportional Reward #: {}\tReward {}\tLoss {}".format(k, reward_sum, loss_sum) 
 
 # Test.
 
