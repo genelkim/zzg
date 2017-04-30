@@ -16,7 +16,7 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_dummy_noise_50_100.csv'
+datafile = 'data/linear_dummy.csv'
 # Index of data for price(close)
 PRICE_INDEX = 0
 
@@ -55,18 +55,24 @@ NUM_ACTIONS = len(ACTION_LIST)
 ACTION_VAL = { BUY_ACT : 1, SELL_ACT : -1, HOLD_ACT : 0.0 }
 
 # Q-Learning.
-EPOCHS = 20
+EPOCHS = 100
 BUFFER_SIZE = 200
 # Gene: I set discout factor to 0 since our current action don't actually cause a state transition.
-gamma = 1.0/EPOCHS  # discount factor
-#gamma = 0
+#gamma = 1.0/EPOCHS  # discount factor
+gamma = 0.5
 alpha = 1     # learning rate
 epsilon = 1   # exploration factor
-WINDOW_SIZE = 15
+WINDOW_SIZE = 5
 
-FINAL_REWARD_FACTOR = 1.0
-WINDOW_REWARD_FACTOR = 1.0 / ((len(data) / WINDOW_SIZE) * 10)
-SINGLE_REWARD_FACTOR = 1.0 / (len(data) * 100)
+REWARD_FACTOR_BASE = 10e-3
+#FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
+FINAL_REWARD_FACTOR = 0
+#WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
+WINDOW_REWARD_FACTOR = 0
+SINGLE_REWARD_FACTOR = REWARD_FACTOR_BASE / (len(data) * 100)
+
+
+INIT_VAR = 0.02
 
 # LSTM.
 NUM_FEATURES = data.shape[1]
@@ -79,7 +85,7 @@ FULL_LSTM_STATE_SIZE_HIDDEN = 2*LSTM_STATE_SIZE_HIDDEN
 
 
 BATCH_SIZE = 1
-STEPSIZE = 1 
+STEPSIZE = 0.01 
 
 
 LSTM_INIT = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE).astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
@@ -98,17 +104,22 @@ print ""
 print "SHORT UPDATE"
 #print "LONG UPDATE"
 
+LSTATE_INIT = np.random.normal(0, INIT_VAR, FULL_LSTM_STATE_SIZE)\
+    .astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
+
 #
 # Helper Functions
 #
 
 # Mean Squared Error Loss Function for TensorFlow.
 def mse_loss_fn(prediction, gold):
-  return tf.sqrt(tf.reduce_sum(tf.pow(tf.subtract(tf.transpose(prediction), gold), 2)))
+  return tf.reduce_mean(tf.pow(tf.subtract(tf.transpose(prediction), gold), 2))
 
 # Python MSE
 def mse_loss_py(prediction, gold):
-  return np.sqrt(np.sum(np.power(prediction.T - gold, 2)))
+  #print prediction.T - gold
+  #print np.power(prediction.T - gold, 2)
+  return np.mean(np.power(prediction.T - gold, 2))
 
 # Reward is difference in price(close) difference * \
 #           action (number of shares sold/bought)
@@ -125,7 +136,7 @@ def stateful_reward(action, t, data, agent_state, past_reward):
   # Value of current state.
   state_val = agent_state.cash + agent_state.stocks*data[t][PRICE_INDEX]
   if agent_state.stocks < 0:
-    state_val = -10e10
+    state_val = -10e8
 
   total_reward = 0
   new_reward = list(past_reward)
@@ -137,11 +148,69 @@ def stateful_reward(action, t, data, agent_state, past_reward):
     total_reward += (state_val - past_reward.window)*WINDOW_REWARD_FACTOR
     new_reward[1] = state_val
 
+  """
+  print "stateful_reward"
+  print "past_reward", past_reward
+  print "action", action
+  print "action_val", ACTION_VAL[action]
+  print "agent_state", agent_state
+  print "price", data[t][PRICE_INDEX]
+  print "t", t
+  print "state_val", state_val
+  print "\n\n"
+  """
+
   total_reward += (state_val - past_reward.single)*SINGLE_REWARD_FACTOR
   new_reward[0] = state_val
 
   return total_reward, RewardHistory(new_reward[0], new_reward[1], new_reward[2])
   
+
+# Take action on state and return the next state.
+# Inputs
+#   cur_state: current state features
+#   action:    action index taken
+#   data:      action independent state info
+#   t:         timestep (after action taken)
+# Returns
+#   next_state:     updated state features
+#   agent_state:    updated action-dependent state features
+# Computes the next state by getting action independent state information
+# from data and timestep, then adding action-dependent state features from 
+# cur_state and action.
+def take_action(cur_state, agent_state, action, data, t):
+  next_state = data[t]
+  # Update cash amount.
+  next_state[-2] = agent_state.cash - ACTION_VAL[action]*cur_state[PRICE_INDEX]
+  # Update stocks amount.
+  next_state[-1] = agent_state.stocks + ACTION_VAL[action]
+  agent_state = AgentState(next_state[-2], next_state[-1])
+
+  return next_state, agent_state
+
+
+# Initialize state, state evaluations, and history parameters.
+# Returns
+#   agent_state: action dependent state features
+#   state:       complete state features
+#   past_reward: state values from previous steps (by reward type).
+#   lstate:      LSTM internal state.
+def initialize_states_and_variables(data):
+  agent_state = INITIAL_AGENT_STATE
+  state = data[0]
+  state[-2] = agent_state.cash
+  state[-1] = agent_state.stocks
+
+  initial_state_value = \
+      agent_state.cash + (agent_state.stocks * data[0][PRICE_INDEX])
+  past_reward = RewardHistory(\
+      initial_state_value, initial_state_value, initial_state_value)
+  
+  lstate = LSTATE_INIT
+  
+
+  return agent_state, state, past_reward, lstate 
+
 
 # Reward function.
 def get_reward(action, t, data, agent_state, past_reward):
@@ -150,16 +219,9 @@ def get_reward(action, t, data, agent_state, past_reward):
 
 # Evaluate performance on optimal strategy (no epsilon or random action).
 def max_reward(sess, data):
-  agent_state = INITIAL_AGENT_STATE
+  agent_state, state, past_reward, lstate = \
+      initialize_states_and_variables(data)
 
-  initial_value = agent_state.cash + (agent_state.stocks * data[0][PRICE_INDEX])
-  past_reward = RewardHistory(initial_value, initial_value, initial_value)
-  
-  lstate = LSTM_INIT
-  lstate_hidden = LSTM_INIT_HIDDEN
-  state = data[0]
-  state[-2] = agent_state.cash
-  state[-1] = agent_state.stocks
   reward_sum = 0
   total_loss = 0
 
@@ -168,23 +230,14 @@ def max_reward(sess, data):
   # Initial step.
   qvals_eval, new_lstm_state_eval,new_lstm_state_eval_hidden= \
       sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
+
   action = np.argmax(qvals_eval)
   actions.append(action)
-  
   # Store oldvals,
   old_qvals = qvals_eval
-  old_state = state
-  
-  #rewards.append(reward)
-  lstate = new_lstm_state_eval
-  lstate_hidden = new_lstm_state_eval_hidden
 
-  state = data[1]
-  state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
-  state[-1] = old_state[-1] + ACTION_VAL[action]
-  agent_state = AgentState(state[-2], state[-1])
-  
-  
+  # Take action and get reward.
+  new_state, agent_state = take_action(state, agent_state, action, data, 1)
   reward, past_reward = get_reward(action, 1, data, agent_state, past_reward)
   reward_sum += reward
 
@@ -194,6 +247,7 @@ def max_reward(sess, data):
     # Gold computation.
     qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
         sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden: lstate_hidden})
+
     # Compute loss.
     max_qval = np.max(qvals_eval)
     #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
@@ -201,8 +255,6 @@ def max_reward(sess, data):
     y = np.zeros((NUM_ACTIONS, 1))
     y[:] = old_qvals[:]
     y[action] = update
-    #print old_qvals
-    #print y
     loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
     total_loss += loss
 
@@ -211,18 +263,12 @@ def max_reward(sess, data):
     actions.append(action)
     
     old_qvals = qvals_eval
-    old_state = state
     
-    lstate = new_lstm_state_eval
-    lstate_hidden = new_lstm_state_eval_hidden
-    state = data[t]
-    state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
-    state[-1] = old_state[-1] + ACTION_VAL[action]
-    agent_state = AgentState(state[-2], state[-1])
+
+    new_state, agent_state = take_action(state, agent_state, action, data, t)
     
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
     reward_sum += reward
-    #rewards.append(reward)
 
 
   print np.bincount(actions)
@@ -312,19 +358,11 @@ replay_buffer = []
 
 # Train.
 for k in xrange(EPOCHS):
-  agent_state = INITIAL_AGENT_STATE
 
-  initial_value = agent_state.cash + (agent_state.stocks * data[0][PRICE_INDEX])
-  past_reward = RewardHistory(initial_value, initial_value, initial_value)
-
-  # Initialize state and data.
-  lstate = LSTM_INIT
   lstate_hidden = LSTM_INIT_HIDDEN
+  agent_state, state, past_reward, lstate = \
+      initialize_states_and_variables(data)
 
-
-  state = data[0]
-  state[-2] = agent_state.cash
-  state[-1] = agent_state.stocks
 
   # Run through data and update in batches of BUFFER_SIZE.
   for t in xrange(1, len(data)):
@@ -340,20 +378,17 @@ for k in xrange(EPOCHS):
     else: 
       action = np.argmax(qvals_eval)
     
-    # Take action, increment state.
-    new_state = data[t]
-    new_state[-2] = state[-2] - ACTION_VAL[action]*state[PRICE_INDEX]
-    new_state[-1] = state[-1] + ACTION_VAL[action]
-    agent_state = AgentState(new_state[-2], new_state[-1])
-
-    # Observe reward. 
+    # Take action, increment state, observe reward
+    new_state, agent_state = take_action(state, agent_state, action, data, t)
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
+
     current_lstm_state = new_lstm_state_eval
     current_lstm_state_hidden = new_lstm_state_eval_hidden
 
 
     # Store action.
     cur_replay_step = (state, action, reward, new_state, qvals_eval, current_lstm_state, current_lstm_state_hidden)
+
     if (len(replay_buffer) < BUFFER_SIZE):
       replay_buffer.append(cur_replay_step)
     else:
@@ -365,6 +400,7 @@ for k in xrange(EPOCHS):
         #sess.run(qvals, feed_dict={inputs=old_state, lstm_state=old_lstate})
         #old_qvals = qvals
         qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate, lstm_state_hidden:new_lstate_hidden})
+
         max_qval = np.max(qvals_eval)
         # Q-update
         #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
@@ -372,6 +408,14 @@ for k in xrange(EPOCHS):
         y = np.zeros((NUM_ACTIONS, 1))
         y[:] = old_qvals[:]
         y[action] = update
+
+        """
+        print "action", action
+        print "reward", reward
+        print "old_qvals", old_qvals
+        print "y", y
+        print "\n\n"
+        """
 
         X_train.append(old_state)
         y_train.append(y)
@@ -391,19 +435,20 @@ for k in xrange(EPOCHS):
       # Reset.
       replay_buffer = []
 
-    
+    # Update state and lstate    
     state = new_state
     lstate = current_lstm_state
     lstate_hidden = current_lstm_state_hidden
     #print "current_lstm_state type", type(current_lstm_state)
+
 
  
   # Update exploration factor.
   if epsilon > 0.1:
     epsilon -= (1.0 / EPOCHS)
   # Update future weight.
-  if gamma < 0.95 and gamma > 0.0:
-    gamma += (1.0 / EPOCHS)
+  #if gamma < 0.95 and gamma > 0.0:
+  #  gamma += (1.0 / EPOCHS)
 
   
   reward_sum, loss_sum = max_reward(sess, data) 
