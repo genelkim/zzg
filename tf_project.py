@@ -17,14 +17,16 @@ map_fn = tf.map_fn
 AgentState = namedtuple("AgentState", ["cash", "stocks"])
 INITIAL_AGENT_STATE = AgentState(60000, 100) # Cash/stocks
 RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
-WINDOW_SIZE = 5
+WINDOW_SIZE = 50
 
 #
 # Load Data
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_updown_dummy_noise_10_20_extra_features.csv'
+#datafile = 'data/linear_updown_dummy_noise_10_20_extra_features.csv'
+datafile = 'data/linear_neg_dummy_noise_5_15_extra_features.csv'
+#datafile = 'data/linear_dummy_noise_10_200_extra_features.csv'
 # Index of data for price(close)
 PRICE_INDEX = 1
 
@@ -48,8 +50,10 @@ normed_data = np.array([x / variances for x in normed_data])
 data = np.append(raw_data, normed_data, axis=1)
 count_column = np.arange(len(raw_data)).reshape((len(raw_data), 1))
 data = np.append(data, count_column, axis=1)
-window_boolean_column = (count_column % WINDOW_SIZE == (WINDOW_SIZE - 1)) * 1
-data = np.append(data, window_boolean_column, axis=1)
+#window_boolean_column = (count_column % WINDOW_SIZE == (WINDOW_SIZE - 1)) * 1
+#data = np.append(data, window_boolean_column, axis=1)
+window_distance_column = [WINDOW_SIZE - (x % WINDOW_SIZE) for x in count_column]
+data = np.append(data, window_distance_column, axis=1)
 end_epoch_column = np.zeros((len(raw_data), 1))
 end_epoch_column[len(raw_data) - 1][0] = 1
 data = np.append(data, end_epoch_column, axis=1)
@@ -66,15 +70,16 @@ data = np.nan_to_num(data)
 #
 
 # Actions.
+ACT_SIZE = 100
 BUY_ACT = 2
 SELL_ACT = 0
 HOLD_ACT = 1
 ACTION_LIST = [SELL_ACT, HOLD_ACT, BUY_ACT]
 NUM_ACTIONS = len(ACTION_LIST)
-ACTION_VAL = { BUY_ACT : 1, SELL_ACT : -1, HOLD_ACT : 0.0 }
+ACTION_VAL = { BUY_ACT : 1*ACT_SIZE, SELL_ACT : -1*ACT_SIZE, HOLD_ACT : 0.0*ACT_SIZE }
 
 # Q-Learning.
-EPOCHS = 100
+EPOCHS = 300
 BUFFER_SIZE = 200
 # Gene: I set discout factor to 0 since our current action don't actually cause a state transition.
 #gamma = 1.0/EPOCHS  # discount factor
@@ -83,10 +88,10 @@ alpha = 1     # learning rate
 epsilon = 1   # exploration factor
 
 REWARD_FACTOR_BASE = 10e-3
-#FINAL_REWARD_FACTOR = 0
-#WINDOW_REWARD_FACTOR = 0
-FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
-WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
+FINAL_REWARD_FACTOR = 0
+WINDOW_REWARD_FACTOR = 0
+#FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
+#WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
 SINGLE_REWARD_FACTOR = REWARD_FACTOR_BASE / (len(data) * 100)
 
 
@@ -179,8 +184,8 @@ def stateful_reward(action, t, data, agent_state, past_reward):
   total_reward += (state_val - past_reward.single)*SINGLE_REWARD_FACTOR
   new_reward[0] = state_val
   
-  if agent_state.stocks < 0:
-    total_reward = -10e4
+  #if agent_state.stocks < 0:
+  #  total_reward = -10e4
 
   return total_reward, RewardHistory(new_reward[0], new_reward[1], new_reward[2])
   
@@ -254,8 +259,6 @@ def monte_carlo_reward(sess, data):
   proportions = np.exp(qvals_eval).reshape(len(qvals_eval))
   proportions = proportions / np.sum(proportions)
   action = np.random.choice([0, 1, 2], 1, p=proportions)[0]
-
-  
   
   
   actions.append(action)
@@ -497,7 +500,7 @@ for k in xrange(EPOCHS):
 
 
     # Store action.
-    cur_replay_step = (state, action, reward, new_state, qvals_eval, current_lstm_state, current_lstm_state_hidden)
+    cur_replay_step = (state, action, reward, new_state, qvals_eval, t, current_lstm_state, current_lstm_state_hidden)
 
     if (len(replay_buffer) < BUFFER_SIZE):
       replay_buffer.append(cur_replay_step)
@@ -505,7 +508,7 @@ for k in xrange(EPOCHS):
 
       X_train = []
       y_train = []
-      for old_state, action, reward, new_state, old_qvals, new_lstate, new_lstate_hidden in replay_buffer:
+      for old_state, action, reward, new_state, old_qvals, t, new_lstate, new_lstate_hidden in replay_buffer:
         # Get max_Q(S',a)
         #sess.run(qvals, feed_dict={inputs=old_state, lstm_state=old_lstate})
         #old_qvals = qvals
@@ -514,7 +517,9 @@ for k in xrange(EPOCHS):
         max_qval = np.max(qvals_eval)
         # Q-update
         #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
-        update = alpha * (reward + (gamma * max_qval))
+        update = reward
+        if t < len(data):
+          update += (gamma * max_qval)
         y = np.zeros((NUM_ACTIONS, 1))
         y[:] = old_qvals[:]
         y[action] = update
