@@ -7,6 +7,12 @@ import numpy.random as random
 from matplotlib import pyplot as plt
 import tensorflow as tf
 from collections import namedtuple
+import math
+import sys
+
+import tensorflow.contrib.layers as layers
+
+map_fn = tf.map_fn
 
 AgentState = namedtuple("AgentState", ["cash", "stocks"])
 INITIAL_AGENT_STATE = AgentState(60000, 100) # Cash/stocks
@@ -16,9 +22,9 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_dummy.csv'
+datafile = 'data/linear_dummy_extra_features.csv'
 # Index of data for price(close)
-PRICE_INDEX = 0
+PRICE_INDEX = 1
 
 
 # Data format:
@@ -28,7 +34,8 @@ PRICE_INDEX = 0
 #data = data[:10000]
 #NUM_FEATURES = 5
 raw_data = np.genfromtxt(datafile, delimiter=",")
-raw_data = raw_data.reshape((len(raw_data), 1))
+if raw_data.ndim == 1:
+  raw_data = raw_data.reshape((len(raw_data), 1))
 
 # Rescale data.
 means = np.mean(raw_data, axis=0)
@@ -40,7 +47,7 @@ qstate_zeros = np.zeros((raw_data.shape[0], len(INITIAL_AGENT_STATE)))
 
 data = np.append(raw_data, normed_data, axis=1)
 data = np.append(data, qstate_zeros, axis=1)
-
+data = np.nan_to_num(data)
 
 #
 # Global Parameters.
@@ -95,7 +102,7 @@ print "SHORT UPDATE"
 #print "LONG UPDATE"
 
 LSTATE_INIT = np.random.normal(0, INIT_VAR, FULL_LSTM_STATE_SIZE)\
-    .astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
+    .astype(np.float64).reshape((1,FULL_LSTM_STATE_SIZE))
 
 #
 # Helper Functions
@@ -243,6 +250,13 @@ def max_reward(sess, data):
     y[:] = old_qvals[:]
     y[action] = update
     loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
+    if math.isnan(loss):
+      print "loss is nan", loss
+      print "old_qvals", old_qvals
+      print "y", y
+      print "update", update
+      print "\n\n"
+      sys.exit()
     total_loss += loss
 
     # Store reward and transition state.
@@ -268,15 +282,15 @@ def max_reward(sess, data):
 #   input for current step
 #   lstm hidden state from previous step
 #   gold value for training
-inputs = tf.placeholder(tf.float32, shape=(BATCH_SIZE,NUM_FEATURES), name="tf_inputs")
-gold = tf.placeholder(tf.float32, shape=(BATCH_SIZE,NUM_ACTIONS), name="tf_gold")
+inputs = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_FEATURES), name="tf_inputs")
+gold = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_ACTIONS), name="tf_gold")
 
 # c - LSTM speak
-lstm_state = tf.placeholder(tf.float32, shape=(BATCH_SIZE,FULL_LSTM_STATE_SIZE), name="tf_lstm_state")
+lstm_state = tf.placeholder(tf.float64, shape=(BATCH_SIZE,FULL_LSTM_STATE_SIZE), name="tf_lstm_state")
 
 # Fully Connected layer weights and biases.
-FW = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE], stddev=INIT_VAR, mean=0, dtype=tf.float32), name="FW", dtype=tf.float32)
-FB = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=INIT_VAR, mean=0, dtype=tf.float32), name="FB", dtype=tf.float32)
+FW = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE], stddev=INIT_VAR, mean=0, dtype=tf.float64), name="FW", dtype=tf.float64)
+FB = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=INIT_VAR, mean=0, dtype=tf.float64), name="FB", dtype=tf.float64)
 
 # LSTM model (weights are stored implicitly)
 lstm = tf.contrib.rnn.BasicLSTMCell(LSTM_STATE_SIZE, state_is_tuple=False)
@@ -289,10 +303,13 @@ outputs, new_lstm_state = lstm(inputs, lstm_state)
 #new_lstm_state = pred[1]
 qvals = tf.matmul(FW, tf.transpose(outputs))
 
+#qvals = layers.fully_connected(outputs, num_outputs=NUM_ACTIONS, activation_fn=None)
+
+
 # Training.
 loss = mse_loss_fn(qvals, gold)
-#train_step = tf.train.AdamOptimizer(STEPSIZE).minimize(loss)
-train_step = tf.train.GradientDescentOptimizer(STEPSIZE).minimize(loss)
+train_step = tf.train.AdamOptimizer(STEPSIZE).minimize(loss)
+#train_step = tf.train.GradientDescentOptimizer(STEPSIZE).minimize(loss)
 
 # Start interactive session.
 sess = tf.InteractiveSession()
@@ -321,6 +338,18 @@ for k in xrange(EPOCHS):
 
     qvals_eval, new_lstate = \
         sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
+
+    """
+    print qvals_eval
+    if math.isnan(qvals_eval[0,0]):
+      print "qvals_eval is nan"
+      print "qvals_eval", qvals_eval
+      print "new_lstate", new_lstate
+      print "state", state
+      print "lstate", lstate
+      print "\n\n"
+      sys.exit()
+    """
 
     # Choose action.
     if (random.random() < epsilon):
