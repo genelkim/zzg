@@ -16,7 +16,7 @@ RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_dummy.csv'
+datafile = 'data/linear_dummy_noise_50_100.csv'
 # Index of data for price(close)
 PRICE_INDEX = 0
 
@@ -117,7 +117,7 @@ def stateful_reward(action, t, data, agent_state, past_reward):
   # Value of current state.
   state_val = agent_state.cash + agent_state.stocks*data[t][PRICE_INDEX]
   if agent_state.stocks < 0:
-    state_val = -100000000
+    state_val = -10e10
 
   total_reward = 0
   new_reward = list(past_reward)
@@ -170,9 +170,9 @@ def max_reward(sess, data):
   #rewards.append(reward)
   lstate = new_lstm_state_eval
   state = data[1]
-  state[-2] = old_state[-2] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+  state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
   state[-1] = old_state[-1] + ACTION_VAL[action]
-  agent_state = AgentState(new_state[-2], new_state[-1])
+  agent_state = AgentState(state[-2], state[-1])
   
   
   reward, past_reward = get_reward(action, 1, data, agent_state, past_reward)
@@ -205,9 +205,9 @@ def max_reward(sess, data):
     
     lstate = new_lstm_state_eval
     state = data[t]
-    state[-2] = old_state[-2] + ACTION_VAL[action]*old_state[PRICE_INDEX]
+    state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
     state[-1] = old_state[-1] + ACTION_VAL[action]
-    agent_state = AgentState(new_state[-2], new_state[-1])
+    agent_state = AgentState(state[-2], state[-1])
     
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
     reward_sum += reward
@@ -295,7 +295,7 @@ for k in xrange(EPOCHS):
     
     # Take action, increment state.
     new_state = data[t]
-    new_state[-2] = state[-2] + ACTION_VAL[action]*state[PRICE_INDEX]
+    new_state[-2] = state[-2] - ACTION_VAL[action]*state[PRICE_INDEX]
     new_state[-1] = state[-1] + ACTION_VAL[action]
     agent_state = AgentState(new_state[-2], new_state[-1])
 
