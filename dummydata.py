@@ -17,8 +17,9 @@ def calcSma(data, smaPeriod):
 
 mu,sigma=10,2
 data=[6100,6230]
-for i in range(50):
-    data.append(data[-1]+np.random.normal(mu,sigma,1)[0])
+for i in range(3000):
+    #data.append(data[-1]+np.random.normal(mu,sigma,1)[0])
+    data.append(data[-1]+10)
     
 data=np.array(data)    
 dif=np.diff(data)
@@ -29,4 +30,7 @@ sma15=calcSma(data,15)
 d={'price':data,'dif':dif,'sma15':sma15}
 d=pd.DataFrame(d)
 d.fillna(0)
-d.to_csv('data/data_10__dif.csv',index=False)
+d.to_csv('data/linear_dummy_extra_features.csv',index=False,header=False)
+
+
+
