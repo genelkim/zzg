@@ -17,12 +17,14 @@ map_fn = tf.map_fn
 AgentState = namedtuple("AgentState", ["cash", "stocks"])
 INITIAL_AGENT_STATE = AgentState(60000, 100) # Cash/stocks
 RewardHistory = namedtuple("RewardHistory", ["single", "window", "final"])
+WINDOW_SIZE = 5
+
 #
 # Load Data
 #
 
 #datafile = 'data/dummydata.3000'
-datafile = 'data/linear_dummy_noise_10_20_extra_features.csv'
+datafile = 'data/linear_updown_dummy_noise_10_20_extra_features.csv'
 # Index of data for price(close)
 PRICE_INDEX = 1
 
@@ -42,10 +44,20 @@ means = np.mean(raw_data, axis=0)
 variances = np.var(raw_data, axis=0)
 normed_data = [x - means for x in raw_data]
 normed_data = np.array([x / variances for x in normed_data])
-# Placeholder for qstate values.
-qstate_zeros = np.zeros((raw_data.shape[0], len(INITIAL_AGENT_STATE))) 
 
 data = np.append(raw_data, normed_data, axis=1)
+count_column = np.arange(len(raw_data)).reshape((len(raw_data), 1))
+data = np.append(data, count_column, axis=1)
+window_boolean_column = (count_column % WINDOW_SIZE == (WINDOW_SIZE - 1)) * 1
+data = np.append(data, window_boolean_column, axis=1)
+end_epoch_column = np.zeros((len(raw_data), 1))
+end_epoch_column[len(raw_data) - 1][0] = 1
+data = np.append(data, end_epoch_column, axis=1)
+
+# Placeholder for qstate values + action.
+#action_zeros = np.zeros((raw_data.shape[0], 1)) 
+#data = np.append(data, action_zeros, axis=1)
+qstate_zeros = np.zeros((raw_data.shape[0], len(INITIAL_AGENT_STATE))) 
 data = np.append(data, qstate_zeros, axis=1)
 data = np.nan_to_num(data)
 
@@ -66,16 +78,15 @@ EPOCHS = 100
 BUFFER_SIZE = 200
 # Gene: I set discout factor to 0 since our current action don't actually cause a state transition.
 #gamma = 1.0/EPOCHS  # discount factor
-gamma = 0.5
+gamma = 0.1
 alpha = 1     # learning rate
 epsilon = 1   # exploration factor
-WINDOW_SIZE = 5
 
 REWARD_FACTOR_BASE = 10e-3
-#FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
-FINAL_REWARD_FACTOR = 0
-#WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
-WINDOW_REWARD_FACTOR = 0
+#FINAL_REWARD_FACTOR = 0
+#WINDOW_REWARD_FACTOR = 0
+FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
+WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
 SINGLE_REWARD_FACTOR = REWARD_FACTOR_BASE / (len(data) * 100)
 
 
@@ -142,9 +153,7 @@ def simple_reward(action, t, data):
 def stateful_reward(action, t, data, agent_state, past_reward):
   # Value of current state.
   state_val = agent_state.cash + agent_state.stocks*data[t][PRICE_INDEX]
-  if agent_state.stocks < 0:
-    state_val = -10e8
-
+  
   total_reward = 0
   new_reward = list(past_reward)
   # Compute final reward.
@@ -169,6 +178,9 @@ def stateful_reward(action, t, data, agent_state, past_reward):
 
   total_reward += (state_val - past_reward.single)*SINGLE_REWARD_FACTOR
   new_reward[0] = state_val
+  
+  if agent_state.stocks < 0:
+    total_reward = -10e4
 
   return total_reward, RewardHistory(new_reward[0], new_reward[1], new_reward[2])
   
@@ -223,6 +235,77 @@ def initialize_states_and_variables(data):
 # Reward function.
 def get_reward(action, t, data, agent_state, past_reward):
   return stateful_reward(action, t, data, agent_state, past_reward)
+
+
+# Evaluate performance on optimal strategy (no epsilon or random action).
+def monte_carlo_reward(sess, data):
+  agent_state, state, past_reward, lstate, lstate_hidden = \
+      initialize_states_and_variables(data)
+
+  reward_sum = 0
+  total_loss = 0
+  actions = []
+
+  # Initial step.
+  qvals_eval, new_lstm_state_eval,new_lstm_state_eval_hidden = \
+      sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
+      feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
+ 
+  proportions = np.exp(qvals_eval).reshape(len(qvals_eval))
+  proportions = proportions / np.sum(proportions)
+  action = np.random.choice([0, 1, 2], 1, p=proportions)[0]
+
+  
+  
+  
+  actions.append(action)
+  # Store oldvals,
+  old_qvals = qvals_eval
+  # Take action and get reward.
+  new_state, agent_state = take_action(state, agent_state, action, data, 1)
+  reward, past_reward = get_reward(action, 1, data, agent_state, past_reward)
+  reward_sum += reward
+
+  # Compute prediction and gold in tandem.
+  for t in xrange(2, len(data)):
+    # Gold computation.
+    qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
+        sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden: lstate_hidden})
+
+    # Compute loss.
+    max_qval = np.max(qvals_eval)
+    #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
+    update = alpha * (reward + (gamma * max_qval))
+    y = np.zeros((NUM_ACTIONS, 1))
+    y[:] = old_qvals[:]
+    y[action] = update
+    loss = mse_loss_py(old_qvals, y) # Seems a bit funny... the loss is always the reward size...
+    if math.isnan(loss):
+      print "loss is nan", loss
+      print "old_qvals", old_qvals
+      print "y", y
+      print "update", update
+      print "\n\n"
+      sys.exit()
+    total_loss += loss
+
+    # Store reward and transition state.
+    proportions = np.exp(qvals_eval).reshape(len(qvals_eval))
+    proportions = proportions / np.sum(proportions)
+    action = np.random.choice([0, 1, 2], 1, p=proportions)[0]
+    actions.append(action)
+    
+    old_qvals = qvals_eval
+    
+
+    new_state, agent_state = take_action(state, agent_state, action, data, t)
+    
+    reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
+    reward_sum += reward
+
+
+  print np.bincount(actions)
+  return reward_sum, total_loss
   
 
 # Evaluate performance on optimal strategy (no epsilon or random action).
@@ -232,24 +315,20 @@ def max_reward(sess, data):
 
   reward_sum = 0
   total_loss = 0
-
   actions = []
 
   # Initial step.
   qvals_eval, new_lstm_state_eval,new_lstm_state_eval_hidden = \
       sess.run([qvals, new_lstm_state, new_lstm_state_hidden], \
       feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
-
   action = np.argmax(qvals_eval)
   actions.append(action)
   # Store oldvals,
   old_qvals = qvals_eval
-
   # Take action and get reward.
   new_state, agent_state = take_action(state, agent_state, action, data, 1)
   reward, past_reward = get_reward(action, 1, data, agent_state, past_reward)
   reward_sum += reward
-
 
   # Compute prediction and gold in tandem.
   for t in xrange(2, len(data)):
@@ -350,10 +429,7 @@ with tf.variable_scope('hidden_layer'):
 #Output from hidden fully connected layer
 qvals = tf.matmul(FW_hidden, tf.transpose(outputs_hidden))
 
-
-
 #qvals = layers.fully_connected(outputs, num_outputs=NUM_ACTIONS, activation_fn=None)
-
 
 # Training.
 loss = mse_loss_fn(qvals, gold)
@@ -487,6 +563,8 @@ for k in xrange(EPOCHS):
   
   reward_sum, loss_sum = max_reward(sess, data) 
   print "Epoch #: {}\tReward {}\tLoss {}".format(k, reward_sum, loss_sum) 
+  reward_sum, loss_sum = monte_carlo_reward(sess, data) 
+  print "Logistic Proportional Reward #: {}\tReward {}\tLoss {}".format(k, reward_sum, loss_sum) 
 
 # Test.
 
