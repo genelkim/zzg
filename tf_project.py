@@ -68,15 +68,23 @@ FINAL_REWARD_FACTOR = 1.0
 WINDOW_REWARD_FACTOR = 1.0 / ((len(data) / WINDOW_SIZE) * 10)
 SINGLE_REWARD_FACTOR = 1.0 / (len(data) * 100)
 
-
 # LSTM.
 NUM_FEATURES = data.shape[1]
-#LSTM_HIDDEN_SIZE = 64
-LSTM_HIDDEN_SIZE = NUM_FEATURES
 LSTM_STATE_SIZE = NUM_FEATURES
 FULL_LSTM_STATE_SIZE = 2*LSTM_STATE_SIZE
+
+NUM_FEATURES_EXPAND = 2*NUM_FEATURES
+LSTM_STATE_SIZE_HIDDEN = NUM_FEATURES_EXPAND
+FULL_LSTM_STATE_SIZE_HIDDEN = 2*LSTM_STATE_SIZE_HIDDEN
+
+
 BATCH_SIZE = 1
 STEPSIZE = 1 
+
+
+LSTM_INIT = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE).astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
+LSTM_INIT_HIDDEN = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE_HIDDEN).astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE_HIDDEN))
+
 
 print "Parameters"
 print "gamma", gamma
@@ -147,19 +155,19 @@ def max_reward(sess, data):
   initial_value = agent_state.cash + (agent_state.stocks * data[0][PRICE_INDEX])
   past_reward = RewardHistory(initial_value, initial_value, initial_value)
   
-  lstate = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE).astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
+  lstate = LSTM_INIT
+  lstate_hidden = LSTM_INIT_HIDDEN
   state = data[0]
   state[-2] = agent_state.cash
   state[-1] = agent_state.stocks
   reward_sum = 0
   total_loss = 0
 
-  rewards = []
   actions = []
 
   # Initial step.
-  qvals_eval, new_lstm_state_eval = \
-      sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
+  qvals_eval, new_lstm_state_eval,new_lstm_state_eval_hidden= \
+      sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
   action = np.argmax(qvals_eval)
   actions.append(action)
   
@@ -169,6 +177,8 @@ def max_reward(sess, data):
   
   #rewards.append(reward)
   lstate = new_lstm_state_eval
+  lstate_hidden = new_lstm_state_eval_hidden
+
   state = data[1]
   state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
   state[-1] = old_state[-1] + ACTION_VAL[action]
@@ -182,8 +192,8 @@ def max_reward(sess, data):
   # Compute prediction and gold in tandem.
   for t in xrange(2, len(data)):
     # Gold computation.
-    qvals_eval, new_lstm_state_eval = \
-        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
+    qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
+        sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden: lstate_hidden})
     # Compute loss.
     max_qval = np.max(qvals_eval)
     #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
@@ -204,6 +214,7 @@ def max_reward(sess, data):
     old_state = state
     
     lstate = new_lstm_state_eval
+    lstate_hidden = new_lstm_state_eval_hidden
     state = data[t]
     state[-2] = old_state[-2] - ACTION_VAL[action]*old_state[PRICE_INDEX]
     state[-1] = old_state[-1] + ACTION_VAL[action]
@@ -228,23 +239,56 @@ def max_reward(sess, data):
 inputs = tf.placeholder(tf.float32, shape=(BATCH_SIZE,NUM_FEATURES), name="tf_inputs")
 gold = tf.placeholder(tf.float32, shape=(BATCH_SIZE,NUM_ACTIONS), name="tf_gold")
 
+#Hidden version of input, also the output from last layer
+inputs_hidden = tf.placeholder(tf.float32,shape=(BATCH_SIZE,NUM_FEATURES_EXPAND), name="tf_inputs_hidden");
+
 # c - LSTM speak
 lstm_state = tf.placeholder(tf.float32, shape=(BATCH_SIZE,FULL_LSTM_STATE_SIZE), name="tf_lstm_state")
 
-# Fully Connected layer weights and biases.
-FW = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE], stddev=0.2, mean=0, dtype=tf.float32), name="FW", dtype=tf.float32)
-FB = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=0.2, mean=0, dtype=tf.float32), name="FB", dtype=tf.float32)
+#Hidden LSTM speak
+lstm_state_hidden = tf.placeholder(tf.float32, shape=(BATCH_SIZE, FULL_LSTM_STATE_SIZE_HIDDEN), name="tf_lstm_state_hidden")
+
+#Fully Connected layer weights and biases.
+FW = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, LSTM_STATE_SIZE], stddev=0.2, mean=0, dtype=tf.float32), \
+                 name="FW", dtype=tf.float32)
+FB = tf.Variable(tf.truncated_normal([NUM_FEATURES_EXPAND, 1], stddev=0.2, mean=0, dtype=tf.float32),\
+                 name="FB", dtype=tf.float32)
+
+#Hidden fully Connected layer weights and biases.
+FW_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, LSTM_STATE_SIZE_HIDDEN], stddev=0.2, mean=0, dtype=tf.float32), \
+                 name="FW_hidden", dtype=tf.float32)
+FB_hidden = tf.Variable(tf.truncated_normal([NUM_ACTIONS, 1], stddev=0.2, mean=0, dtype=tf.float32),\
+                 name="FB_hidden", dtype=tf.float32)
+
+
 
 # LSTM model (weights are stored implicitly)
-lstm = tf.contrib.rnn.BasicLSTMCell(LSTM_STATE_SIZE, state_is_tuple=False)
-# TODO: add dropout 0.5
-
+with tf.variable_scope('input_layer'):
+  lstm = tf.contrib.rnn.BasicLSTMCell(LSTM_STATE_SIZE, state_is_tuple=False)
 # Prediction.
 #lstm_in = tf.concat([inputs, lstm_state], 0)
-outputs, new_lstm_state = lstm(inputs, lstm_state)
+  outputs, new_lstm_state = lstm(inputs, lstm_state)
+
+#Output from fully connected layer, this is also the input for hidden lstm layer
+inputs_hidden = tf.transpose(tf.matmul(FW, tf.transpose(outputs)))
+
+
+# TODO: add dropout 0.5
+
+#Hidden LSTM model
+with tf.variable_scope('hidden_layer'):
+  lstm_hidden = tf.contrib.rnn.BasicLSTMCell(LSTM_STATE_SIZE_HIDDEN, state_is_tuple=False)
+
+#Prediction from hidden layer
+  outputs_hidden, new_lstm_state_hidden = lstm_hidden(inputs_hidden, lstm_state_hidden)
+
 #outputs = pred[0]
 #new_lstm_state = pred[1]
-qvals = tf.matmul(FW, tf.transpose(outputs))
+
+#Output from hidden fully connected layer
+qvals = tf.matmul(FW_hidden, tf.transpose(outputs_hidden))
+
+
 
 # Training.
 loss = mse_loss_fn(qvals, gold)
@@ -274,7 +318,10 @@ for k in xrange(EPOCHS):
   past_reward = RewardHistory(initial_value, initial_value, initial_value)
 
   # Initialize state and data.
-  lstate = np.random.normal(0, 0.2, FULL_LSTM_STATE_SIZE).astype(np.float32).reshape((1,FULL_LSTM_STATE_SIZE))
+  lstate = LSTM_INIT
+  lstate_hidden = LSTM_INIT_HIDDEN
+
+
   state = data[0]
   state[-2] = agent_state.cash
   state[-1] = agent_state.stocks
@@ -283,9 +330,9 @@ for k in xrange(EPOCHS):
   for t in xrange(1, len(data)):
     if t % 1000 == 0:
       print t
+    qvals_eval, new_lstm_state_eval, new_lstm_state_eval_hidden = \
+        sess.run([qvals, new_lstm_state, new_lstm_state_hidden], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate, lstm_state_hidden:lstate_hidden})
 
-    qvals_eval, new_lstm_state_eval = \
-        sess.run([qvals, new_lstm_state], feed_dict={inputs:state.reshape((1,NUM_FEATURES)), lstm_state:lstate})
 
     # Choose action.
     if (random.random() < epsilon):
@@ -302,20 +349,22 @@ for k in xrange(EPOCHS):
     # Observe reward. 
     reward, past_reward = get_reward(action, t, data, agent_state, past_reward)
     current_lstm_state = new_lstm_state_eval
+    current_lstm_state_hidden = new_lstm_state_eval_hidden
+
 
     # Store action.
-    cur_replay_step = (state, action, reward, new_state, qvals_eval, lstate, current_lstm_state)
+    cur_replay_step = (state, action, reward, new_state, qvals_eval, current_lstm_state, current_lstm_state_hidden)
     if (len(replay_buffer) < BUFFER_SIZE):
       replay_buffer.append(cur_replay_step)
     else:
 
       X_train = []
       y_train = []
-      for old_state, action, reward, new_state, old_qvals, old_lstate, new_lstate in replay_buffer:
+      for old_state, action, reward, new_state, old_qvals, new_lstate, new_lstate_hidden in replay_buffer:
         # Get max_Q(S',a)
         #sess.run(qvals, feed_dict={inputs=old_state, lstm_state=old_lstate})
         #old_qvals = qvals
-        qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate})
+        qvals_eval = sess.run(qvals, feed_dict={inputs:new_state.reshape((1,NUM_FEATURES)), lstm_state:new_lstate, lstm_state_hidden:new_lstate_hidden})
         max_qval = np.max(qvals_eval)
         # Q-update
         #update = old_qvals[action] + alpha * (reward + gamma * max_qval - old_qvals[action])
@@ -331,11 +380,13 @@ for k in xrange(EPOCHS):
       for j in xrange(len(X_train)):
         x = X_train[j]
         y = y_train[j]
-        cur_lstate = replay_buffer[j][-1]
+        cur_lstate = replay_buffer[j][-2]
+        cur_lstate_hidden = replay_buffer[j][-1]
         sess.run(train_step, \
             feed_dict={inputs:x.reshape((1,NUM_FEATURES)), \
                        gold:y.reshape((1,3)), \
-                       lstm_state:cur_lstate.reshape((1,FULL_LSTM_STATE_SIZE))})
+                       lstm_state:cur_lstate.reshape((1,FULL_LSTM_STATE_SIZE)),\
+                       lstm_state_hidden:current_lstm_state_hidden.reshape(1,FULL_LSTM_STATE_SIZE_HIDDEN)})
 
       # Reset.
       replay_buffer = []
@@ -343,6 +394,7 @@ for k in xrange(EPOCHS):
     
     state = new_state
     lstate = current_lstm_state
+    lstate_hidden = current_lstm_state_hidden
     #print "current_lstm_state type", type(current_lstm_state)
 
  
