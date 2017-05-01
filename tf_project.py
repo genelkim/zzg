@@ -23,9 +23,9 @@ WINDOW_SIZE = 50
 # Load Data
 #
 
-#datafile = 'data/dummydata.3000'
+datafile = 'data/linear_dummy_extra_features.csv'
 #datafile = 'data/linear_updown_dummy_noise_10_20_extra_features.csv'
-datafile = 'data/linear_neg_dummy_noise_5_15_extra_features.csv'
+#datafile = 'data/linear_neg_dummy_noise_5_15_extra_features.csv'
 #datafile = 'data/linear_dummy_noise_10_200_extra_features.csv'
 # Index of data for price(close)
 PRICE_INDEX = 1
@@ -88,9 +88,9 @@ alpha = 1     # learning rate
 epsilon = 1   # exploration factor
 
 REWARD_FACTOR_BASE = 10e-3
-FINAL_REWARD_FACTOR = 0
+#FINAL_REWARD_FACTOR = 0
 WINDOW_REWARD_FACTOR = 0
-#FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
+FINAL_REWARD_FACTOR = REWARD_FACTOR_BASE
 #WINDOW_REWARD_FACTOR = REWARD_FACTOR_BASE / ((len(data) / WINDOW_SIZE) * 10)
 SINGLE_REWARD_FACTOR = REWARD_FACTOR_BASE / (len(data) * 100)
 
