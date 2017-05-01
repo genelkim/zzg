@@ -383,9 +383,6 @@ def max_reward(sess, data):
 inputs = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_FEATURES), name="tf_inputs")
 gold = tf.placeholder(tf.float64, shape=(BATCH_SIZE,NUM_ACTIONS), name="tf_gold")
 
-#Hidden version of input, also the output from last layer
-inputs_hidden = tf.placeholder(tf.float64,shape=(BATCH_SIZE,NUM_FEATURES_EXPAND), name="tf_inputs_hidden");
-
 # c - LSTM speak
 lstm_state = tf.placeholder(tf.float64, shape=(BATCH_SIZE,FULL_LSTM_STATE_SIZE), name="tf_lstm_state")
 
